@@ -1,0 +1,102 @@
+function P = pressure_general(points_Gauss_coor_norm, Nbtri, areas, nbg, out_points, out_vel, points_Gauss_coor_local, fsd, rhof);
+% This function is used to calculate the pression in the air caused by
+% vibrating round plate.
+
+
+c = 340; % Speed of Sound
+
+
+
+% cd(path);
+% [F, out_vel, fsd, areas, points_Gauss_coor_local, points_Gauss_coor_norm, Nbtri] = Found_Displace_circ(OutputFileName,lc,nbg,Tsd);
+
+
+rop = size(out_points,1);
+B = sqrt(areas/pi); % Equivalent radius of each mesh
+
+%% Calculate the pression
+nt = size(out_vel,1);
+
+if mod(nt,2) == 1           % on s'assure que out_vel a une taille paire
+    out_vel(nt+1,:) = 0;
+end
+
+nt = size(out_vel,1);
+
+out_vel_fre = fft(out_vel);
+clear('out_vel');
+
+
+% Calculate the distances of each Gauss point and each output point
+
+DeltaP = zeros(nt/2+1,Nbtri);
+dw = 2*pi/(nt/fsd);
+Dw = [0:dw:(nt/2-1)*dw,nt/2*dw];            % J'ai corrigé le signe du dernier terme
+W = repmat(areas',Nbtri,1);
+R = distances(out_points,points_Gauss_coor_local);      % Pourquoi les distances entre les points de Gauss ?
+Vn = out_vel_fre(1:nt/2+1,:);
+
+fprintf('\n--------------Begin to calculate the DeltaP-----------------\n');
+
+tLoop = tic;
+
+parfor i = 1:nt/2+1
+    k = Dw(i)/c;
+    [M] = MM(Nbtri, W, k, B, R);
+    DP = -1i*rhof*Dw(i)*(M\(Vn(i,:).'));
+    DeltaP(i,:) = DP.';
+    
+    if (i == round(nt/40))
+        Time5 = toc(tLoop);
+        EstimatedTime = Time5*20;
+        hours = floor(EstimatedTime / 3600);
+        EstimatedTime = EstimatedTime - hours * 3600;
+        mins = floor(EstimatedTime / 60);
+        secs = EstimatedTime - mins * 60;
+        disp(['Estimated time for the time integration: ', num2str(hours), ' hours ', num2str(mins), ' minutes ', num2str(secs), ' seconds ']);
+    end
+    
+    if mod(i,round(nt/40)) == 0
+        disp(['Progress: ', num2str(round(200*i/nt)), '%']);
+    end
+    
+end
+
+mkdir('DeltaP');
+cd('DeltaP');
+save(sprintf('DeltaP-Tsd_%f-lc_%f.mat',Tsd,lc), 'DeltaP', 'fsd', 'points_Gauss_coor_local','areas','Nbtri','-v7.3');
+cd ..;
+
+clear('out_vel_fre');
+
+fprintf('\n------------The DeltaP calculation is done----------------\n');
+
+
+P = zeros(nt,rop); % Initialization of the pression
+
+% Gauss Quadrature
+fprintf('\n--------------Beginning to calculate the pressure-----------------\n');
+
+R = distances(points_Gauss_coor_local,out_points);
+n = out_points(:,3);
+n = repmat(n,1,Nbtri);
+W = repmat(areas',rop,1);
+
+for l = 1:nt/2+1
+    k = Dw(l)/c; % wave number
+    L = -exp(-1i*k.*R)./(4*pi*R).*(1./R + 1i*k).*(n./R).*W;
+    PP = L*DeltaP(l,:).';
+    P(l,:) = PP.';
+    if mod(l,round(nt/40)) == 0
+        disp(['Progress: ', num2str(round(200*l/nt)), '%']);
+    end
+end
+
+% Because P is Conjugate symmetry, we can get the rest half part of P simply
+P(nt/2+2:end,:) = conj(flipud(P(2:nt/2,:))); 
+
+fprintf('\n------------The pressure calculation is done----------------\n');
+
+
+end
+

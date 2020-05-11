@@ -1,0 +1,111 @@
+%% This is the main file used to compute the acoustic pressure in both the embbeded and general cases.
+%  Simulating the vibration of a circular plate
+
+%  !! Run this file while being in the 'Project' folder !!
+
+%% Setup
+
+clear;
+clc;
+
+switch_case = 0;            % Select the case : 0 for embedded, 1 for general
+
+
+ResultsFolderName = 'Results_001';         % Name of the results folder
+MeshFileName = './new_msh/cercle01.msh';    % Name of the mesh file
+
+Project_path = '/home/antonio/Project'; % Path to the project folder
+addpath(genpath(Project_path));         % Adds the Project folder and its subfolders to the path
+
+VKG_path = '/home/antonio/VK-Gong';     % Path to the VK-Gong folder
+addpath(genpath(VKG_path));             % Adds the VK-Gong folder and its subfolders to the path
+
+
+PlateCharacteristicsFileName = 'PlateCharacteristics.mat'; % Physical characteristics of the plate: Dimensions, imperfection profile, material and boundary conditions.  
+SimulationParametersFileName = 'SimulationParameters.mat'; % Parameters related to the simulation: Time length, scheme, number of modes, output points, accuracy.
+GammaFileName = 'GammaCircular-Nphi_NPHICircular.mat'; % Name of the file containing the Gamma Tensor.  
+ScoreFileName = 'ScoreParameters.mat'; % Characteristics of the excitation.
+PressureParametersFileName = 'PressureParameters.mat'; % The position of the output point(out_points) and the size of the meshes (lc) in the mesh file and the number of points 
+% Gauss in a maillage(nbg) and the time of the simulation(Tsd) and the density of the fluide(rhof).
+
+fsd = 0;                    % Fréquence d'échantillonnage
+Tsd = 2;                    % Temps simulé
+Nphi = 100;
+Npsi = 100;
+% out_points = magic(3);      % Points de sortie
+nbg = 3;                    % Nombre de points de Gauss : choisir parmi {3, 6, 7, 16, 19}
+
+save(SimulationParametersFileName,'fsd','Nphi','Npsi','Tsd','-append');
+% save(PressureParametersFileName,'nbg','out_points','-append');
+
+
+load(PressureParametersFileName);
+load(PlateCharacteristicsFileName, 'Rd');
+save(SimulationParametersFileName,'Tsd','-append');
+
+
+
+
+
+
+%% Gauss points
+
+[points_Gauss_coor_norm, points_Gauss_coor_local, Nbtri, areas] = local_Gauss_points(MeshFileName, nbg);
+
+
+%% Simulation setup
+
+cd(VKG_path);
+
+[Rd, hd, E, BC, e, Nphi, Npsi, scheme, H0, H1, H2, filename, Ai, C, C1, C2, k_t, c_t, xkn, JJ, II, Kkn, rp, tad, fs, Tsd] = plate_def_circ(PlateCharacteristicsFileName, SimulationParametersFileName, ResultsFolderName, GammaFileName);
+
+[ f_time, Tn ] = score_circ(ScoreFileName, Rd, hd, E, BC, e, Nphi, scheme, C, k_t, c_t, xkn, JJ, II, Kkn, tad, fs, Tsd);
+
+%% Calcul du mouvement de chaque point de Gauss avec VK-Gong
+
+switch scheme
+    case 'ECS'
+        [out_nd] = ftime_imperfect_ECS( Nphi, Npsi, Ai, H0, H1, H2, C, C1,C2, Tn, e, f_time, rp);
+        
+    case 'verlet'
+        [out_nd] = ftime_imperfect_verlet( Nphi, Npsi, Ai, H1, C, C1, C2, Tn, e, f_time, rp);
+    
+    otherwise
+        disp('Unknown scheme');
+end
+
+
+fsd = round(fs/tad);
+out = out_nd*hd; % Dimensioned output displacement
+out_vel = diff(out,1,1)*fsd; % Dimensioned output velocity
+
+%% Calcul de la pression
+
+switch switch_case
+    
+    case 0      % Rayleigh
+        
+        disp('Rayleigh'
+        P = pressure_Rayleigh(points_Gauss_coor_norm, Nbtri, areas, nbg, out_points, out_vel, points_Gauss_coor_local, fsd, rhof);
+
+        
+    case 1      % General
+        
+        P = pressure_general(points_Gauss_coor_norm, Nbtri, areas, nbg, out_points, out_vel, points_Gauss_coor_local, fsd, rhof);
+        
+end
+
+%% Common step : calculer la IFFT de P^
+
+P_t = ifft(P,'symmetric');
+
+
+%% Common step : sauvegarder et afficher tous les résultats
+
+cd(Project_path);
+mkdir(ResultsFolderName);
+cd(ResultsFolderName);
+
+save(sprintf('P_t-Tsd_%f-lc_%f-nbg_%d.mat',Tsd,lc,nbg), 'P','P_t','fsd','-v7.3');
+
+
